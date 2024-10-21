@@ -4,3 +4,7 @@ lib
 lib64
 include
 pyvenv.cfg
+
+# ignore cifar data
+cifar-10-batches-py
+cifar-10-python.tar.gz
