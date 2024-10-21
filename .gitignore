@@ -5,3 +5,7 @@ lib64
 include
 pyvenv.cfg
 share
+
+# ignore HIGGS dataset
+HIGGS.csv.gz
+higgs
