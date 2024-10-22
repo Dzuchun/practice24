@@ -5,3 +5,11 @@ lib64
 include
 pyvenv.cfg
 share
+__pycache__
+
+# ignore higgs
+higgs
+HIGGS.csv.gz
+
+# ignore rust project for higgs regularization
+regularize
