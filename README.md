@@ -9,3 +9,4 @@ Run the example
 ```sh
 cargo r --release
 ```
+Note: this example takes **a lot** of RAM. Can't reasonably do anything about it - it's just that many data to keep.
