@@ -23,10 +23,6 @@ input_encoded = Input(shape=(encoding_dim,))
 
 # автоенкодер
 autoencoder = Model(input_img, decoded)
-# енкодер
-encoder = Model(input_img, encoded)
-# декодер
-decoder = Model(input_encoded, autoencoder.layers[-1](input_encoded))
 
 # compile
 autoencoder.compile(optimizer="adam", loss="binary_crossentropy")
@@ -40,20 +36,23 @@ autoencoder.fit(
 )
 
 # representation
-display_size = 56
-images_count = 15
-enc = encoder.predict(x_test)
-dec = decoder.predict(enc)
-plt.figure(figsize=(20, 4))
-for i in range(images_count):
-    ax = plt.subplot(10, images_count, i + 1)
-    plt.imshow(x_test[i].reshape((28, 28)))
-    # plt.gray()
-    ax.set_axis_off()
+image_cols = 20
+image_rows = 4
+rec = autoencoder.predict(x_test)
+plt.figure(layout="tight", figsize=(image_cols, image_rows))
+for row in range(image_rows):
+    for col in range(image_cols):
+        idx = image_cols * row + col
+        i = image_cols * 2 * row + col
+        ax = plt.subplot(image_rows * 2, image_cols, i + 1)
+        plt.imshow(x_test[idx].reshape((28, 28)))
+        # plt.gray()
+        ax.set_axis_off()
 
-    ax = plt.subplot(10, 15, i + images_count + 1)
-    plt.imshow(dec[i].reshape((28, 28)))
-    # plt.gray()
-    ax.set_axis_off()
+        i = image_cols * (2 * row + 1) + col
+        ax = plt.subplot(image_rows * 2, image_cols, i + 1)
+        plt.imshow(rec[idx].reshape((28, 28)))
+        # plt.gray()
+        ax.set_axis_off()
 
-plt.show()
+plt.savefig("4_8_4.png")
