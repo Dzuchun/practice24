@@ -17,3 +17,6 @@ BNB_All_NoWire_00.h5
 
 # ignore output files
 *.png
+
+# rust-specific build folder
+target
