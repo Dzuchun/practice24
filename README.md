@@ -2,9 +2,9 @@
 
 Get the dataset
 ```sh
-# I would have put a wget command here, but the dataset itself seems to not be available anymore
-
-# Following instructions assume you have the dataset at `./HIGGS.csv.gz`
+wget https://archive.ics.uci.edu/static/public/280/higgs.zip
+unzip higgs.zip
+# note: this takes a loooong time, it's like 10GB
 ```
 
 Create and enter the venv
