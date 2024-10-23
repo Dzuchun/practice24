@@ -9,7 +9,11 @@ __pycache__
 
 # ignore higgs
 higgs
+higgs.zip
 HIGGS.csv.gz
-
-# ignore rust project for higgs regularization
 regularize
+cifar-10-python.tar.gz
+BNB_All_NoWire_00.h5
+
+# ignore output files
+*.png
