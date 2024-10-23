@@ -5,3 +5,10 @@ lib64
 include
 pyvenv.cfg
 share
+
+# datasets
+BNB_All_NoWire_00.h5
+cifar-10-python.tar.gz
+
+# ignore output images
+*.png
