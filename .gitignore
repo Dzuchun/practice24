@@ -9,6 +9,8 @@ share
 # datasets
 cifar-10-python.tar.gz
 BNB_All_NoWire_00.h5
+higgs
+higgs.zip
 
 # output images
 *.png
