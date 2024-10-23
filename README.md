@@ -1,4 +1,4 @@
-Currently-committed code solved following task:
+Currently-committed code solves the following task:
 $$
 \begin{cases}
 u(x, y) \\
