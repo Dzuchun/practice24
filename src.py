@@ -3,6 +3,7 @@ from math import cos, sin, tau
 from typing import Tuple
 
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import numpy as np
 import tensorflow as tf
 from keras import Input, Model, Optimizer
@@ -142,6 +143,16 @@ X = np.linspace(-4.0, 4.0, IMAGE_SIZE)
 Y = np.linspace(-4.0, 4.0, IMAGE_SIZE)
 Z = np.array([[x, y] for x in X for y in Y])
 z = u(tf.convert_to_tensor(Z)).numpy().reshape((IMAGE_SIZE, IMAGE_SIZE))
+plt.scatter([t[0] for t in Z], [t[1] for t in Z], c=z, cmap="plasma")
+plt.colorbar()
 
-plt.imshow(z, interpolation="bilinear", cmap="plasma")
-plt.show()
+# display some of the relevant shapes
+plt.gca().add_patch(
+    patches.Circle((0, 0), 4, color="k", alpha=0.2, fill=False, label="Boundary")
+)
+plt.gca().add_patch(patches.Circle((-1, 0), 0.03, color="r", alpha=0.2, label="Center"))
+plt.gca().add_patch(
+    patches.Rectangle((0, 0), 1, 1, color="b", alpha=0.2, fill=False, label="Square")
+)
+
+plt.savefig("5_3_custom.png")
