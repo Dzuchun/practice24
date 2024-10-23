@@ -2,9 +2,9 @@
 
 Get the dataset
 ```sh
-# I would have put a wget command here, but the dataset itself seems to not be available anymore
-
-# Following instructions assume you have the dataset at `./HIGGS.csv.gz`
+wget https://archive.ics.uci.edu/static/public/280/higgs.zip
+unzip higgs.zip
+# note: this takes a loooong time, it's like 10GB
 ```
 
 Create and enter the venv
@@ -39,11 +39,4 @@ pip install -r requirements.txt
 Run the model
 ```sh
 python src.py
-```
-
-Currently, this gives an error:
-```
-ImportError: /home/dzu/Repositories/practice24_main/lib/python3.12/site-packages/tensorflow/python/platform/../_pywrap_tensor
-flow_internal.so: undefined symbol: _ZN10tensorflow35ConvertSavedModelToTFLiteFlatBufferERKN4toco10ModelFlagsERNS0_9TocoFlags
-EPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKNS_12quantization17PyFunctionLibraryE, version tensorflow
 ```
