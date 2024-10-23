@@ -1,14 +1,13 @@
 from keras._tf_keras.keras.datasets import cifar10
 from keras._tf_keras.keras.utils import to_categorical
-
-from keras.src.models.sequential import Sequential
-from tensorflow.python.keras.layers import (
+from keras._tf_keras.keras.layers import (
     Conv2D,
     Activation,
     MaxPooling2D,
     Flatten,
     Dense,
 )
+from keras._tf_keras.keras.models import Sequential
 
 # завантаження набору даних CIFAR -10
 (x_train, y_train), (x_test, y_test) = cifar10.load_data()
