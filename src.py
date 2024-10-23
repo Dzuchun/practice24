@@ -1,4 +1,5 @@
 from math import pi
+from os import name
 from typing import Callable
 
 import matplotlib.pyplot as plt
@@ -94,6 +95,12 @@ for epoch in range(epochs):
     print(f"Epoch {epoch}: loss = {l}")
 
     # add a snapshot for plotting
-    plt.plot(x_plot, u(x_plot), color=cmap(1 - epoch / (epochs - 1)))
+    plt.plot(
+        x_plot,
+        u(x_plot),
+        color=cmap(1 - epoch / (epochs - 1)),
+        label=f"epoch {epoch+1}",
+    )
 
-plt.show()
+plt.legend()
+plt.savefig("5_3.png")
