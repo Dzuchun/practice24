@@ -1,0 +1,19 @@
+# ignore python
+bin
+lib
+lib64
+include
+share
+pyvenv.cfg
+__pycache__
+
+# higgs-related
+higgs
+HIGGS.csv.gz
+regularize
+
+# ignore actual dataset
+BNB_All_NoWire_00.h5
+
+# ignore output files
+*.png
