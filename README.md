@@ -1,6 +1,16 @@
-
+Initialize venv and activate it
+```sh
+python -m venv .
+source bin/activate.fish # (for fish users; should be similar for other shells)
 ```
-ImportError: /home/dzu/Repositories/py/practice/tf/lib/python3.12/site-packages/tensorflow/python/platform/../_pywrap_tensorf
-low_internal.so: undefined symbol: _ZN10tensorflow35ConvertSavedModelToTFLiteFlatBufferERKN4toco10ModelFlagsERNS0_9TocoFlagsE
-PNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKNS_12quantization17PyFunctionLibraryE, version tensorflow
+
+Install all the packages
+```sh
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Run
+```sh
+python src.py
 ```
