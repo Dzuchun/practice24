@@ -52,4 +52,5 @@ y_predict = np.array(
 )
 
 plt.plot(t[len(data) - predictions : len(data)], y_predict, label="predicted")
-plt.show()
+plt.legend()
+plt.savefig("4_4.png")
