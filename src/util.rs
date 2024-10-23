@@ -87,7 +87,10 @@ where
         .take(bins.len() + 1)
         .collect();
     for (o, w) in data {
-        let (Ok(i) | Err(i)) = bins.binary_search(o.borrow());
+        let i = match bins.binary_search(o.borrow()) {
+            Ok(i) => i,      // exact match for bin boundary
+            Err(i) => i - 1, // sorted after (i-1)th bin boundary, so it belongs to (i-1)th bin.
+        };
         res[i] += w;
     }
     res

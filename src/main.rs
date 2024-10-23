@@ -3,8 +3,9 @@ use std::error::Error;
 use hdf5::{types::FixedAscii, File};
 use itertools::Itertools;
 use plotly::{
-    common::Font,
+    common::{Font, TickMode},
     histogram::{Bins, HistFunc},
+    layout::{Axis, TicksDirection, TicksPosition},
     Configuration, Histogram, Layout, Plot,
 };
 use util::{bins_1d, OrdFloat};
@@ -37,8 +38,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     plot.set_configuration(Configuration::new().fill_frame(true));
     plot.set_layout(
         Layout::new()
-            .title("Simulated primary proton energy [GeV]")
-            .font(Font::new().size(32)),
+            .title("Simulated primary proton momentum [GeV]")
+            .font(Font::new().size(20))
+            .x_axis(
+                Axis::new()
+                    .tick_mode(TickMode::Linear)
+                    .ticks_on(TicksPosition::Labels)
+                    .show_tick_labels(true)
+                    .ticks(TicksDirection::Outside)
+                    .tick_width(3)
+                    .dtick(0.25),
+            ),
     );
     let nbins = bins.len();
     let hist = Histogram::new_vertical(binned)
