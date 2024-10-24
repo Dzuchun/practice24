@@ -1,4 +1,5 @@
 Currently-committed code solves the following task:
+
 $$
 \begin{cases}
 u(x, y) \\
