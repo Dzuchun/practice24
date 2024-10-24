@@ -3,7 +3,7 @@ use std::{
     collections::BTreeMap,
     error::Error,
     ops::Deref,
-    sync::{Arc, LazyLock, RwLock},
+    sync::{Arc, LazyLock, Mutex, RwLock},
 };
 
 use geometry3d::{
@@ -18,7 +18,11 @@ use plotly::{
     common::{Line, Marker, Mode},
     Configuration, Plot, Scatter3D,
 };
+use rayon::iter::{
+    IntoParallelIterator, IntoParallelRefIterator, ParallelBridge, ParallelIterator,
+};
 use serde::Serialize;
+use tokio_stream::StreamExt;
 use util::OrdFloat;
 
 //mod geometry2d;
@@ -205,7 +209,7 @@ fn wire(plane: LocalPlane, wire: LocalWire) -> impl Borrow<LineSegment> {
 
 #[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn Error>> {
-    const EVENT_NO: usize = 10;
+    const EVENT_NO: usize = 1024;
 
     const DRIFT_VELOCITY: f64 = 1.6 / 10.0; // cm/mus
     const CLOCK_SPEED: f64 = 64e6f64;
@@ -221,21 +225,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     const MIN_WIRE: LocalWire = LocalWire(i32::MIN);
     const MAX_WIRE: LocalWire = LocalWire(i32::MAX);
 
-    let file = hdf5::file::File::open("BNB_All_NoWire_00.h5")?;
     let mut plot = Plot::new();
     plot.set_configuration(Configuration::new().fill_frame(true));
-    // first, draw true tracks
-    let tracks = merge![file @ "/particle_table" =>
+
+    let file = hdf5::file::File::open("BNB_All_NoWire_00.h5")?;
+
+    // first, "select" the event
+    let (selected_event, _) = merge![file @ "/event_table" =>
+        EventId 3 of i64 > "event_id",
+    ]
+    .nth(EVENT_NO)
+    .expect("Selected event should be present");
+    println!("Working on event {selected_event:?}");
+
+    // then, draw true tracks
+    let event_tracks = merge![file @ "/particle_table" =>
         StartPos 3 of f32 > "start_position_corr",
         EndPos 3 of f32 > "end_position_corr",
         G4Id 1 of i32 > "g4_id",
         Category 1 of i32 > "category",
     ]
     .chunk_by(|(event_id, _, _, _, _)| *event_id);
-    let (selected_event, event_tracks) = tracks
+    let event_tracks = event_tracks
         .into_iter()
-        .nth(EVENT_NO)
-        .expect("Need at least one event");
+        .filter_map(|(event_id, group)| (event_id == selected_event).then_some(group))
+        .flatten();
+
     let mut tracks = Vec::new();
     for (
         event_id,
@@ -269,52 +284,56 @@ fn main() -> Result<(), Box<dyn Error>> {
                 z: end_z.into_inner(),
             },
         ) else {
+            eprintln!("Event seems to have a track starting and ending at the same point");
             continue;
         };
         tracks.push(track);
     }
-    // then, find and draw draw hits
+    println!("Finished drawing true tracks");
+
+    // then, find and draw hits
     let hits = merge![file @ "/hit_table" =>
-        HitId 1 of i32 > "hit_id",
         LocalPlane 1 of i32 > "local_plane",
         LocalTime 1 of i32 > "local_time",
         LocalWire 1 of i32 > "local_wire",
         Rms 1 of i32 > "rms",
     ]
-    .chunk_by(|(event_id, _, _, _, _, _)| *event_id);
-    let (_, event_hits) = hits
-        .into_iter()
-        .find(|(event_id, _)| *event_id == selected_event)
-        .expect("Need corresponding event");
-
-    let mut event_hits = event_hits
-        .map(|(_, hit_id, plane, time, wire, rms)| (hit_id, (plane, time, wire, rms)))
-        .collect::<BTreeMap<HitId, _>>();
-    // filter out hits that Pandora identified as real
-    let edep = merge![file @ "/pandoraHit_table" =>
-        HitId 1 of i32 > "hit_id",
-    ]
-    .chunk_by(|(event_id, _)| *event_id);
-    let (_, real_hits) = edep
-        .into_iter()
-        .find(|(event_id, _)| *event_id == selected_event)
-        .expect("Need hits for corresponding event");
-    let mut plane0 = BTreeMap::new();
-    let mut plane1 = BTreeMap::new();
-    let mut plane2 = BTreeMap::new();
-    real_hits.dedup().for_each(|(_, hit_id)| {
-        let (plane, time, wire, rms) = event_hits
-            .remove(&hit_id)
-            .expect("Must have entry for this hit");
-        let memo = match plane {
-            LocalPlane::Plus60 => &mut plane0,
-            LocalPlane::Minus60 => &mut plane1,
-            LocalPlane::Vertical => &mut plane2,
-        };
-        memo.insert((time, wire), rms);
+    .par_bridge();
+    let event_hits = hits.filter_map(|(event_id, plane, time, wire, rms)| {
+        (event_id == selected_event).then_some((plane, time, wire, rms))
     });
-    let mut data = Vec::new();
-    for (&(time0, wire_no0), rms0) in &plane0 {
+
+    let mut plane0 = BTreeMap::<(LocalTime, LocalWire), Rms>::new();
+    let mut plane1 = BTreeMap::<(LocalTime, LocalWire), Rms>::new();
+    let mut plane2 = BTreeMap::<(LocalTime, LocalWire), Rms>::new();
+    event_hits.for_each_init(
+        {
+            let plane0 = Arc::new(Mutex::new(&mut plane0));
+            let plane1 = Arc::new(Mutex::new(&mut plane1));
+            let plane2 = Arc::new(Mutex::new(&mut plane2));
+            move || {
+                (
+                    Arc::clone(&plane0),
+                    Arc::clone(&plane1),
+                    Arc::clone(&plane2),
+                )
+            }
+        },
+        |(plane0, plane1, plane2), (plane, time, wire, rms)| {
+            let memo = match plane {
+                LocalPlane::Plus60 => plane0,
+                LocalPlane::Minus60 => plane1,
+                LocalPlane::Vertical => plane2,
+            };
+            memo.lock().unwrap().insert((time, wire), rms);
+        },
+    );
+    println!(
+        "Finished sorting hits, {} total",
+        plane0.len() + plane1.len() + plane2.len()
+    );
+
+    let plane0_hits = plane0.into_par_iter().map(|((time0, wire_no0), rms0)| {
         let geom_wire0 = {
             let mut gw: LineSegment =
                 LineSegment::clone(wire(LocalPlane::Plus60, wire_no0).borrow());
@@ -331,13 +350,27 @@ fn main() -> Result<(), Box<dyn Error>> {
         let max_time = LocalTime(
             (f64::from(time0.0) + PLANE1_OFFSET + TIME_TOLERANCE + f64::from(rms0.0)).ceil() as i32,
         );
-        for (&(time1, wire_no1), rms1) in plane1.range((min_time, MIN_WIRE)..=(max_time, MAX_WIRE))
-        {
+        (geom_wire0, min_time, max_time, time0, rms0)
+    });
+    let plane1_hits = plane0_hits
+        .flat_map(|(geom_wire0, min_time, max_time, time0, rms0)| {
+            plane1
+                .range((min_time, MIN_WIRE)..=(max_time, MAX_WIRE))
+                .par_bridge()
+                .map(move |(&(time1, wire_no1), &rms1)| {
+                    (
+                        Arc::clone(&geom_wire0),
+                        wire_no1,
+                        [time0, time1],
+                        [rms0, rms1],
+                    )
+                })
+        })
+        .filter_map(|(geom_wire0, wire_no1, [time0, time1], [rms0, rms1])| {
             let time_diff = (f64::from(time1.0) - f64::from(time0.0) - PLANE1_OFFSET).abs();
             // drop, if this time difference cannot be explained by rmses
             if time_diff >= (f64::from(rms0.0) + f64::from(rms1.0)) * RMS_FACTOR {
-                // println!("Drop: t0-1");
-                continue;
+                return None;
             }
             let geom_wire1 = {
                 let mut gw: LineSegment =
@@ -351,8 +384,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             };
             let dist01 = geom_wire0.distance_from(&*geom_wire1);
             if dist01 > DIST_SUM_CUT {
-                // println!("Drop: d0-1");
-                continue;
+                return None;
             }
             let min_time = LocalTime(
                 (f64::from(time0.0) + PLANE2_OFFSET - TIME_TOLERANCE - f64::from(rms0.0)).ceil()
@@ -362,13 +394,44 @@ fn main() -> Result<(), Box<dyn Error>> {
                 (f64::from(time0.0) + PLANE2_OFFSET + TIME_TOLERANCE + f64::from(rms0.0)).ceil()
                     as i32,
             );
-            for (&(time2, wire_no2), rms2) in
-                plane2.range((min_time, MIN_WIRE)..=(max_time, MAX_WIRE))
-            {
+            Some((
+                [geom_wire0, geom_wire1],
+                min_time,
+                max_time,
+                [time0, time1],
+                [rms0, rms1],
+            ))
+        });
+    let plane2_hits = plane1_hits
+        .flat_map(
+            |([geom_wire0, geom_wire1], min_time, max_time, [time0, time1], [rms0, rms1])| {
+                let dist01 = geom_wire0.distance_from(&*geom_wire1);
+                plane2
+                    .range((min_time, MIN_WIRE)..=(max_time, MAX_WIRE))
+                    .par_bridge()
+                    .map(move |(&(time2, wire_no2), &rms2)| {
+                        (
+                            [Arc::clone(&geom_wire0), Arc::clone(&geom_wire1)],
+                            dist01,
+                            wire_no2,
+                            [time0, time1, time2],
+                            [rms0, rms1, rms2],
+                        )
+                    })
+            },
+        )
+        .filter_map(
+            |(
+                [geom_wire0, geom_wire1],
+                dist01,
+                wire_no2,
+                [time0, _time1, time2],
+                [rms0, _rms1, rms2],
+            )| {
                 let time_diff = (f64::from(time2.0) - f64::from(time0.0) - PLANE2_OFFSET).abs();
                 if time_diff >= (f64::from(rms0.0) + f64::from(rms2.0)) * RMS_FACTOR {
                     // println!("Drop: t0-2");
-                    continue;
+                    return None;
                 }
                 let geom_wire2 = {
                     let mut gw: LineSegment =
@@ -383,135 +446,110 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let dist02 = geom_wire0.distance_from(&*geom_wire2);
                 if dist02 > DIST_SUM_CUT {
                     // println!("Drop: d0-2");
-                    continue;
+                    return None;
                 }
                 let dist12 = geom_wire1.distance_from(&*geom_wire2);
                 if dist12 > DIST_SUM_CUT {
                     // println!("Drop: d1-2");
-                    continue;
+                    return None;
                 }
                 let dist = dist01 + dist02 + dist12;
                 if dist > DIST_SUM_CUT {
                     // println!("Drop: d0-1-2");
-                    continue;
+                    return None;
                 }
-                let l0: &geometry3d::line::Line = geom_wire0.deref().as_ref();
-                let l1: &geometry3d::line::Line = geom_wire1.deref().as_ref();
-                let l2: &geometry3d::line::Line = geom_wire2.deref().as_ref();
-                let p01 = l0
-                    .closest_to_other_line(l1)
-                    .expect("Should not be parallel");
-                let p12 = l1
-                    .closest_to_other_line(l2)
-                    .expect("Should not be parallel");
-                let p20 = l2
-                    .closest_to_other_line(l0)
-                    .expect("Should not be parallel");
-                let dist0 = p01.distance_to(&p20);
-                let dist1 = p12.distance_to(&p01);
-                let dist2 = p12.distance_to(&p20);
-                let dist = dist0 + dist1 + dist2;
-                if dist > DIST_SUM_CUT {
-                    // println!("Drop: d0-1-2");
-                    continue;
-                }
-                // println!("hit!");
-                data.push((geom_wire0.clone(), geom_wire1.clone(), geom_wire2));
-            }
-        }
-    }
-    println!("{}", data.len());
-    let mut reconstructed_points = Vec::new();
-    for (gw0, gw1, gw2) in data {
-        let gw0l: &geometry3d::line::Line = gw0.deref().as_ref();
-        let gw1l: &geometry3d::line::Line = gw1.deref().as_ref();
-        let gw2l: &geometry3d::line::Line = gw2.deref().as_ref();
-        let p01 = gw0l
-            .closest_to_other_line(gw1l)
-            .expect("Should not be parallel");
-        let p12 = gw1l
-            .closest_to_other_line(gw2l)
-            .expect("Should not be parallel");
-        let p20 = gw2l
-            .closest_to_other_line(gw0l)
-            .expect("Should not be parallel");
-        reconstructed_points.push(Point {
-            x: (p01.x + p12.x + p20.x) / 3.0,
-            y: (p01.y + p12.y + p20.y) / 3.0,
-            z: (p01.z + p12.z + p20.z) / 3.0,
-        });
-        /*
-        plot.add_trace(
-            Scatter3D::new(
-                vec![gw0.ends().0.x, gw0.ends().1.x],
-                vec![gw0.ends().0.y, gw0.ends().1.y],
-                vec![gw0.ends().0.z, gw0.ends().1.z],
-            )
-            .mode(Mode::Lines)
-            .line(Line::new().color(NamedColor::Cyan)),
+                Some([geom_wire0, geom_wire1, geom_wire2])
+            },
         );
-        plot.add_trace(
-            Scatter3D::new(
-                vec![gw1.ends().0.x, gw1.ends().1.x],
-                vec![gw1.ends().0.y, gw1.ends().1.y],
-                vec![gw1.ends().0.z, gw1.ends().1.z],
-            )
-            .mode(Mode::Lines)
-            .line(Line::new().color(NamedColor::Cyan)),
-        );
-        plot.add_trace(
-            Scatter3D::new(
-                vec![gw2.ends().0.x, gw2.ends().1.x],
-                vec![gw2.ends().0.y, gw2.ends().1.y],
-                vec![gw2.ends().0.z, gw2.ends().1.z],
-            )
-            .mode(Mode::Lines)
-            .line(Line::new().color(NamedColor::Cyan)),
-        );
-        */
-    }
 
-    let mut x = Vec::new();
-    let mut y = Vec::new();
-    let mut z = Vec::new();
-    for point in reconstructed_points {
-        x.push(point.x);
-        y.push(point.y);
-        z.push(point.z);
-    }
-    plot.add_trace(
-        Scatter3D::new(x, y, z)
-            .mode(Mode::Markers)
-            .marker(Marker::new().color(NamedColor::Black).size(1)),
-    );
-    for (plane, hits) in [
-        (LocalPlane::Plus60, plane0),
-        (LocalPlane::Minus60, plane1),
-        (LocalPlane::Vertical, plane2),
-    ] {
-        for (time, wire_no) in hits.keys() {
-            let geom_wire = {
-                let mut gw: LineSegment = LineSegment::clone(wire(plane, *wire_no).borrow());
-                gw.offset(Vector {
-                    vx: f64::from(time.0) * DISTANCE_PER_TIME,
-                    vy: 0.0,
-                    vz: 0.0,
-                });
-                gw
-            };
+    let found_triples = plane2_hits.filter(|[geom_wire0, geom_wire1, geom_wire2]| {
+        let l0: &geometry3d::line::Line = geom_wire0.deref().as_ref();
+        let l1: &geometry3d::line::Line = geom_wire1.deref().as_ref();
+        let l2: &geometry3d::line::Line = geom_wire2.deref().as_ref();
+        let p01 = l0
+            .closest_to_other_line(l1)
+            .expect("Should not be parallel");
+        let p12 = l1
+            .closest_to_other_line(l2)
+            .expect("Should not be parallel");
+        let p20 = l2
+            .closest_to_other_line(l0)
+            .expect("Should not be parallel");
+        let dist0 = p01.distance_to(&p20);
+        let dist1 = p12.distance_to(&p01);
+        let dist2 = p12.distance_to(&p20);
+        let dist = dist0 + dist1 + dist2;
+        dist <= DIST_SUM_CUT
+    });
+
+    let reconstructed_points = found_triples
+        .map(|[gw0, gw1, gw2]| {
+            let gw0l: &geometry3d::line::Line = gw0.deref().as_ref();
+            let gw1l: &geometry3d::line::Line = gw1.deref().as_ref();
+            let gw2l: &geometry3d::line::Line = gw2.deref().as_ref();
+            let p01 = gw0l
+                .closest_to_other_line(gw1l)
+                .expect("Should not be parallel");
+            let p12 = gw1l
+                .closest_to_other_line(gw2l)
+                .expect("Should not be parallel");
+            let p20 = gw2l
+                .closest_to_other_line(gw0l)
+                .expect("Should not be parallel");
+            Point {
+                x: (p01.x + p12.x + p20.x) / 3.0,
+                y: (p01.y + p12.y + p20.y) / 3.0,
+                z: (p01.z + p12.z + p20.z) / 3.0,
+            }
             /*
             plot.add_trace(
                 Scatter3D::new(
-                    vec![geom_wire.ends().0.x, geom_wire.ends().1.x],
-                    vec![geom_wire.ends().0.y, geom_wire.ends().1.y],
-                    vec![geom_wire.ends().0.z, geom_wire.ends().1.z],
+                    vec![gw0.ends().0.x, gw0.ends().1.x],
+                    vec![gw0.ends().0.y, gw0.ends().1.y],
+                    vec![gw0.ends().0.z, gw0.ends().1.z],
                 )
                 .mode(Mode::Lines)
-                .line(Line::new().color(NamedColor::Green)),
+                .line(Line::new().color(NamedColor::Cyan)),
+            );
+            plot.add_trace(
+                Scatter3D::new(
+                    vec![gw1.ends().0.x, gw1.ends().1.x],
+                    vec![gw1.ends().0.y, gw1.ends().1.y],
+                    vec![gw1.ends().0.z, gw1.ends().1.z],
+                )
+                .mode(Mode::Lines)
+                .line(Line::new().color(NamedColor::Cyan)),
+            );
+            plot.add_trace(
+                Scatter3D::new(
+                    vec![gw2.ends().0.x, gw2.ends().1.x],
+                    vec![gw2.ends().0.y, gw2.ends().1.y],
+                    vec![gw2.ends().0.z, gw2.ends().1.z],
+                )
+                .mode(Mode::Lines)
+                .line(Line::new().color(NamedColor::Cyan)),
             );
             */
-        }
+        })
+        .collect::<Vec<_>>();
+    println!(
+        "Finished reconstruction hits, {} total",
+        reconstructed_points.len()
+    );
+
+    let mut vx = Vec::<f64>::new();
+    let mut vy = Vec::<f64>::new();
+    let mut vz = Vec::<f64>::new();
+    for Point { x, y, z } in reconstructed_points {
+        vx.push(x);
+        vy.push(y);
+        vz.push(z);
     }
+    plot.add_trace(
+        Scatter3D::new(vx, vy, vz)
+            .mode(Mode::Markers)
+            .marker(Marker::new().color(NamedColor::Black).size(1)),
+    );
     plot.show();
     Ok(())
 }
